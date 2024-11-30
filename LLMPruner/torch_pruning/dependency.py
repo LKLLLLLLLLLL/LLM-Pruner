@@ -10,7 +10,9 @@ from .pruner import function
 from . import _helpers, utils, ops
 
 __all__ = ["Dependency", "Group", "DependencyGraph"]
-
+nep_flag=True
+get_flag_num=0
+get_pruner_num=0
 
 class Node(object):
     """ Nodes of DepGraph
@@ -297,6 +299,7 @@ class DependencyGraph(object):
             
     def build_dependency(
         self,
+        logger,
         model: torch.nn.Module,
         example_inputs: typing.Union[torch.Tensor, typing.Sequence],
         forward_fn: typing.Callable[[
@@ -317,7 +320,7 @@ class DependencyGraph(object):
             customized_pruners (typing.Dict[typing.Any, function.BasePruningFunc]): pruners for customized layers.
             verbose (bool): verbose mode.
         """
-
+        self.logger=logger
         self.verbose = verbose
         self.model = model
         self._module2name = {module: name for (
@@ -374,7 +377,8 @@ class DependencyGraph(object):
         self.module2node = self._trace(
             model, example_inputs, forward_fn, output_transform=output_transform
         )
-
+        # logger.log("\n============computational graph================\n")
+        # logger.log(self.module2node)
         # Build dependency graph
         self._build_dependency(self.module2node)
         
@@ -459,14 +463,13 @@ class DependencyGraph(object):
                        source=root_node, target=root_node), idxs
         )
         visited_node = set()
-
         def _fix_dependency_graph_non_recursive(dep, idxs):
             processing_stack = [(dep, idxs)]
             while len(processing_stack) > 0:
                 dep, idxs = processing_stack.pop(-1)
                 node, fn = dep.target, dep.handler
                 visited_node.add(node)
-                
+                self.logger.log(node)
                 for new_dep in node.dependencies:
                     if new_dep.is_triggered_by(fn):
                         new_indices = idxs
@@ -486,11 +489,11 @@ class DependencyGraph(object):
                             processing_stack.append(
                                 (new_dep, new_indices)
                             )
-
         _fix_dependency_graph_non_recursive(*group[0])
 
         # merge pruning ops
         merged_group = Group()
+        
         for dep, idxs in group.items:
             merged_group.add_and_merge(dep, idxs)
         merged_group._DG = self
@@ -499,6 +502,20 @@ class DependencyGraph(object):
     def get_all_groups(self, ignored_layers=[], root_module_types=None, root_instances=None):
         visited_layers = []
         ignored_layers = ignored_layers+self.IGNORED_LAYERS
+        m_sum=0
+        global nep_flag
+        global get_flag_num
+        global get_pruner_num
+        if nep_flag:
+            m_num=0
+            nep_flag=False
+            self.logger.log("ignore_len:"+str(len(ignored_layers)))
+            self.logger.log("\n============m===========\n")
+            # self.logger.log(self.module2node)
+            for m in list(self.module2node.keys()):
+                # self.logger.log(self.module2node[m])
+                m_num+=1
+            self.logger.log("m_num:"+str(m_num))
         for m in list(self.module2node.keys()):
             if m in ignored_layers:
                 continue
@@ -515,18 +532,23 @@ class DependencyGraph(object):
                         break
 
             if not flag:
+                get_flag_num+=1
                 continue
 
             pruner = self.get_pruner_of_module(m)
             if pruner is None or pruner.get_out_channels(m) is None:
+                get_pruner_num+=1
                 continue
 
             if m in visited_layers:
                 continue
 
             layer_channels = pruner.get_out_channels(m)
+            self.logger.log("\n============This is one group=============\n")
+            self.logger.log("m_sum_current:"+str(m_sum+1))
             group = self.get_pruning_group(
                 m, pruner.prune_out_channels, list(range(layer_channels)))
+            m_sum+=1
             prunable_group = True
             for dep, _ in group:
                 module = dep.target.module
@@ -537,6 +559,13 @@ class DependencyGraph(object):
                         prunable_group = False
             if prunable_group:
                 yield group
+        self.logger.log("m_num:"+str(m_num))
+        self.logger.log("m_sum:"+str(m_sum))
+        self.logger.log("vis_layers_num:"+str(len(visited_layers)))
+        self.logger.log("flag_num:"+str(get_flag_num))
+        self.logger.log("pruner_num:"+str(get_pruner_num))
+        self.logger.log("root_module_types:"+str(root_module_types))
+        self.logger.log("root_instances:"+str(root_instances))
 
     def get_pruner_of_module(self, module):
         p = self.CUSTOMIZED_PRUNERS.get(module.__class__, None)

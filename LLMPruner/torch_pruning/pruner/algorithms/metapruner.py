@@ -32,6 +32,7 @@ class MetaPruner:
 
     def __init__(
         self,
+        logger,
         # Basic
         model: nn.Module,
         example_inputs: torch.Tensor,
@@ -63,6 +64,8 @@ class MetaPruner:
         output_transform: typing.Callable = None,
         enable_index_mapping: bool = False,
     ):
+        self.logger=logger
+        logger.log("\n==========这是剪枝处理============\n")
         self.model = model
         self.importance = importance
         self.ch_sparsity = ch_sparsity
@@ -78,6 +81,7 @@ class MetaPruner:
 
         # Build dependency graph
         self.DG = dependency.DependencyGraph().build_dependency(
+            logger,
             model,
             example_inputs=example_inputs,
             forward_fn=forward_fn,
@@ -85,7 +89,6 @@ class MetaPruner:
             unwrapped_parameters=unwrapped_parameters,
             customized_pruners=customized_pruners,
         )
-
         self.ignored_layers = []
         if ignored_layers:
             for layer in ignored_layers:
@@ -183,8 +186,13 @@ class MetaPruner:
             if interactive:
                 return self.prune_local()
             else:
+                group_sum=0
                 for group in self.prune_local():
+                    group_sum+=1
+                    # self.logger.log("\n==========group"+str(group_sum)+"==============\n")
+                    # self.logger.log(group._group)
                     group.prune()
+                self.logger.log("group_sum:"+str(group_sum))
 
     def estimate_importance(self, group, ch_groups=1, consecutive_groups=1):
         return self.importance(group, ch_groups=ch_groups, consecutive_groups=consecutive_groups)
@@ -288,6 +296,7 @@ class MetaPruner:
             return
         global_importance = []
         for group in self.DG.get_all_groups(ignored_layers=self.ignored_layers, root_module_types=self.root_module_types, root_instances=self.root_instances):
+            group_sum+=1
             if self._check_sparsity(group):
                 ch_groups = self.get_channel_groups(group)
                 consecutive_groups = self.get_consecutive_groups(group)
@@ -298,7 +307,6 @@ class MetaPruner:
                 if consecutive_groups > 1:
                     imp = imp.view(-1, consecutive_groups).sum(1)
                 global_importance.append((group, ch_groups, consecutive_groups, imp))
-
         imp = torch.cat([local_imp[-1]
                         for local_imp in global_importance], dim=0)
         print(imp.shape, len(global_importance))

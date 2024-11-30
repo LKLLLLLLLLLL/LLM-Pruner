@@ -29,7 +29,7 @@ python llama3.py --pruning_ratio 0.25 \
                  --save_ckpt_log_name llama3_prune \
                  --pruner_type taylor --taylor param_first \
                  --max_seq_len 2048 \
-                 --test_after_train false--test_before_train false--save_model
+                --save_model
 '''
 def set_random_seed(seed):
     random.seed(seed)
@@ -56,6 +56,7 @@ def main(args):
     if args.device != "cpu":
         model.half()
 
+
     if args.test_before_train:
         logger.log("\n==================Generation Results before Pruning================\n")
         model = model.to(args.eval_device)
@@ -81,6 +82,15 @@ def main(args):
 
     model.to(args.device)
 
+
+    logger.log("\n================模型结构=======================\n")
+    model_layersum=0
+    for i in model._modules.items():
+        model_layersum+=1
+    logger.log("model_layer: "+str(model_layersum))
+    logger.log(model)
+
+
     pruner_type = args.pruner_type.lower()
     assert pruner_type in ['random', 'l2', 'l1', 'taylor']
 
@@ -104,7 +114,7 @@ def main(args):
     else:
         raise NotImplementedError
 
-    logger.log("Use {} pruner...".format(pruner_type))
+    # logger.log("Use {} pruner...".format(pruner_type))
     
     if args.block_wise:
         kwargs = {
@@ -129,10 +139,12 @@ def main(args):
         logger.log("Pruning MLP Layer = {}".format(list(range(args.block_mlp_layer_start, args.block_mlp_layer_end))))
 
         pruner = tp.pruner.MetaPruner(
+            logger,
             model,
             forward_prompts,
             **kwargs
         )
+
         model.zero_grad()
 
         logger.log("Start Pruning")
@@ -175,6 +187,8 @@ def main(args):
                 layer.self_attn.num_key_value_heads = layer.self_attn.k_proj.weight.data.shape[0] // layer.self_attn.head_dim
 
         # Clean the gradient in the model
+        input("按下暂停")
+        return
         model.zero_grad()
         for name, module in model.named_parameters():
             if 'weight' in name:
