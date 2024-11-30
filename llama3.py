@@ -19,7 +19,7 @@ from LLMPruner.utils.logger import LoggerWithDepth
 from LLMPruner.evaluator.ppl import PPLMetric
 from LLMPruner.datasets.example_samples import get_examples
 from LLMPruner.templates.prompts import prompts
-
+#简单测试
 def set_random_seed(seed):
     random.seed(seed)
     np.random.seed(seed)
